@@ -33,7 +33,7 @@ import qualified Data.List
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Except (catchError)
 import qualified Control.Exception
-import Control.Concurrent (threadDelay)
+import System.IO (hPutStrLn, stderr)
 import Control.Concurrent.Chan (Chan, newChan, writeChan, readChan)
 import Control.Concurrent.MVar (MVar, newEmptyMVar, takeMVar, tryPutMVar)
 import Control.Concurrent.Async (race, async, waitCatch, Async)
@@ -53,7 +53,7 @@ import Agda.Interaction.Base
 import Agda.Interaction.BasicOps as BasicOps
 import Agda.Interaction.MakeCase (makeCase)
 import Agda.Interaction.Imports (CheckResult, crInterface, Mode(..), parseSource, typeCheckMain)
-import Agda.Interaction.Options (defaultOptions)
+import Agda.Interaction.Options (defaultOptions, CommandLineOptions(..))
 import Agda.Interaction.Output (OutputConstraint)
 import Agda.Interaction.Response
 import Agda.Interaction.JSON (EncodeTCM(..), encodeTCM)
@@ -65,11 +65,11 @@ import Agda.Syntax.Position (Range, rStart, rEnd, posLine, posCol, noRange)
 import Agda.Syntax.Scope.Base (WhyInScopeData(..))
 import Agda.Syntax.Abstract (Expr)
 import Agda.Syntax.Abstract.Name (QName(..), nameBindingSite, qnameName)
-import Agda.Syntax.Translation.AbstractToConcrete (abstractToConcrete_)
+-- import Agda.Syntax.Translation.AbstractToConcrete (abstractToConcrete_) -- redundant
 
 import Agda.TypeChecking.Monad
-import Agda.TypeChecking.Monad.Options (getAgdaLibFilesWithoutTopLevelModuleName, setLibraryIncludes)
-import Agda.TypeChecking.Monad.MetaVars (getInteractionRange)
+-- import Agda.TypeChecking.Monad.Options (getAgdaLibFilesWithoutTopLevelModuleName, setLibraryIncludes) -- redundant
+-- import Agda.TypeChecking.Monad.MetaVars (getInteractionRange) -- redundant
 import Agda.TypeChecking.Pretty (prettyTCM, prettyA)
 
 import Agda.Utils.FileName (absolute, filePath)
@@ -299,9 +299,12 @@ toolToIOTCM currentFilePath tool =
   -- IOTCM type is: Maybe TopLevelModuleName -> IOTCM' Range
   -- So we need to return a function that ignores the module name parameter
   \_ -> case tool of
-    AgdaMCP.Types.AgdaLoad{file} ->
-      -- Load uses the specified file path (format field ignored)
-      IOTCM (T.unpack file) None Direct (Cmd_load (T.unpack file) [])
+    AgdaMCP.Types.AgdaLoad{file, libraryFile} ->
+      -- Pass --library-file option if provided
+      let opts = case libraryFile of
+                   Just lf -> ["--library-file=" ++ T.unpack lf]
+                   Nothing -> []
+      in IOTCM (T.unpack file) None Direct (Cmd_load (T.unpack file) opts)
     AgdaMCP.Types.AgdaGetGoals{} ->
       -- Goals operate on currently loaded file (format field ignored)
       IOTCM currentFilePath None Direct (Cmd_metas Simplified)
@@ -376,16 +379,16 @@ serverLoop stateRef = do
   case JSON.decode (LBS.fromStrict $ TE.encodeUtf8 $ T.pack line) of
     Nothing -> do
       let errorResult = AgdaResult False "Invalid JSON command" Nothing
-      TIO.putStrLn (TE.decodeUtf8 $ LBS.toStrict $ JSON.encode errorResult)
+      hPutStrLn stderr (T.unpack $ TE.decodeUtf8 $ LBS.toStrict $ JSON.encode errorResult)
       serverLoop stateRef
     Just cmd -> do
       result <- runTCMTop $ processMCPCommand stateRef cmd
       case result of
         Left err -> do
           let errorResult = AgdaResult False (T.pack $ show err) Nothing
-          TIO.putStrLn (TE.decodeUtf8 $ LBS.toStrict $ JSON.encode errorResult)
+          hPutStrLn stderr (T.unpack $ TE.decodeUtf8 $ LBS.toStrict $ JSON.encode errorResult)
         Right res ->
-          TIO.putStrLn (TE.decodeUtf8 $ LBS.toStrict $ JSON.encode res)
+          hPutStrLn stderr (T.unpack $ TE.decodeUtf8 $ LBS.toStrict $ JSON.encode res)
       serverLoop stateRef
 
 -- Process MCP commands
@@ -393,8 +396,11 @@ processMCPCommand :: IORef ServerState -> JSON.Value -> TCM AgdaResult
 processMCPCommand stateRef = \case
   JSON.Object obj -> case KM.lookup "command" obj of
     Just (JSON.String "load") ->
-      case KM.lookup "file" obj of
-        Just (JSON.String file) -> mcpLoadFile stateRef (T.unpack file)
+      case (KM.lookup "file" obj, KM.lookup "library_file" obj) of
+        (Just (JSON.String file), Just (JSON.String libFile)) ->
+          mcpLoadFile stateRef (T.unpack file) (Just libFile)
+        (Just (JSON.String file), _) ->
+          mcpLoadFile stateRef (T.unpack file) Nothing
         _ -> pure $ AgdaResult False "Missing file parameter" Nothing
 
     Just (JSON.String "get_goals") ->
@@ -471,8 +477,8 @@ ensureFileLoaded stateRef = do
 -- Helper function to load a file with caching
 -- If the file is already loaded in state, reuse the cached CheckResult
 -- Otherwise, parse and type-check the file
-loadFileWithCache :: IORef ServerState -> FilePath -> TCM CheckResult
-loadFileWithCache stateRef filepath = do
+loadFileWithCache :: IORef ServerState -> FilePath -> Maybe Text -> TCM CheckResult
+loadFileWithCache stateRef filepath libraryFile = do
   absPath <- liftIO $ absolute filepath
   state <- liftIO $ readIORef stateRef
 
@@ -500,7 +506,10 @@ loadFileWithCache stateRef filepath = do
       _ <- getAgdaLibFilesWithoutTopLevelModuleName absPath
 
       -- Set up library includes (adds library paths to options)
-      optsWithLibs <- setLibraryIncludes defaultOptions
+      let defaultOptsWithLibFile = case libraryFile of
+            Just lf -> defaultOptions { optOverrideLibrariesFile = Just (T.unpack lf) }
+            Nothing -> defaultOptions
+      optsWithLibs <- setLibraryIncludes defaultOptsWithLibFile
       setCommandLineOptions' workDir optsWithLibs
 
       fileId <- idFromFile absPath
@@ -513,25 +522,28 @@ loadFileWithCache stateRef filepath = do
       liftIO $ writeIORef stateRef (state { currentFile = Just absPath, checkResult = Just checked })
       return checked
 
-mcpLoadFile :: IORef ServerState -> FilePath -> TCM AgdaResult
-mcpLoadFile stateRef file = do
+mcpLoadFile :: IORef ServerState -> FilePath -> Maybe Text -> TCM AgdaResult
+mcpLoadFile stateRef file libraryFile = do
   absPath <- liftIO $ absolute file
 
   -- Find project root (directory containing .agda-lib file)
   maybeProjectRoot <- liftIO $ findProjectRoot file
   workDir <- case maybeProjectRoot of
     Just root -> do
-      liftIO $ putStrLn $ "Found project root: " ++ root
+      liftIO $ hPutStrLn stderr $ "Found project root: " ++ root
       liftIO $ absolute root
     Nothing -> do
-      liftIO $ putStrLn $ "No project root found, using file directory"
+      liftIO $ hPutStrLn stderr $ "No project root found, using file directory"
       liftIO $ absolute $ takeDirectory file
 
   -- Discover and load .agda-lib files for this file's project
   _ <- getAgdaLibFilesWithoutTopLevelModuleName absPath
 
   -- Set up library includes (adds library paths to options)
-  optsWithLibs <- setLibraryIncludes defaultOptions
+  let defaultOptsWithLibFile = case libraryFile of
+        Just lf -> defaultOptions { optOverrideLibrariesFile = Just (T.unpack lf) }
+        Nothing -> defaultOptions
+  optsWithLibs <- setLibraryIncludes defaultOptsWithLibFile
   setCommandLineOptions' workDir optsWithLibs
 
   -- Properly register the file and get its FileId
@@ -551,7 +563,7 @@ mcpListPostulates stateRef filepath = do
   catchError
     (do
       -- Use cached load if available
-      checked <- loadFileWithCache stateRef filepath
+      checked <- loadFileWithCache stateRef filepath Nothing
 
       -- Get all definitions from the interface's signature (not global signature)
       let sig = iSignature (crInterface checked)
@@ -588,7 +600,7 @@ mcpGoalAtPosition stateRef filepath line col = do
   catchError
     (do
       -- Use cached load if available
-      checked <- loadFileWithCache stateRef filepath
+      checked <- loadFileWithCache stateRef filepath Nothing
 
       -- Get all interaction points (goals)
       interactionIds <- getInteractionPoints
@@ -640,14 +652,14 @@ mcpGotoDefinition stateRef filepath line col = do
   catchError
     (do
       -- Use cached load if available
-      checked <- loadFileWithCache stateRef filepath
+      checked <- loadFileWithCache stateRef filepath Nothing
 
       -- Extract highlighting directly from the interface after type-checking
       -- This is synchronous and doesn't require waiting for async callbacks
       let interface = crInterface checked
       let highlighting = iHighlighting interface
 
-      liftIO $ putStrLn $ "Extracted highlighting directly from interface"
+      liftIO $ hPutStrLn stderr $ "Extracted highlighting directly from interface"
 
       -- We need to convert HighlightingInfo to JSON
       -- HighlightingInfo is RangeMap Aspects
@@ -655,13 +667,13 @@ mcpGotoDefinition stateRef filepath line col = do
       stateAfterLoad <- liftIO $ readIORef stateRef
       case highlightingInfo stateAfterLoad of
         Nothing -> do
-          liftIO $ putStrLn "No highlighting in callback, but we have it from interface"
+          liftIO $ hPutStrLn stderr "No highlighting in callback, but we have it from interface"
           -- For now, return error - need to implement direct conversion
           pure $ AgdaResult False "Highlighting available but conversion not yet implemented. Need to parse RangeMap Aspects directly." Nothing
         Just highlightJson -> do
           liftIO $ do
             let jsonText = TE.decodeUtf8 $ LBS.toStrict $ JSON.encode highlightJson
-            putStrLn $ "Highlighting JSON from callback (first 2000 chars): " ++ take 2000 (T.unpack jsonText)
+            hPutStrLn stderr $ "Highlighting JSON from callback (first 2000 chars): " ++ take 2000 (T.unpack jsonText)
           -- Parse highlighting to find definition at position
           case findDefinitionAtPosition highlightJson line col of
             Nothing -> pure $ AgdaResult False "No definition found at specified position. The position may be on whitespace, keywords, or symbols without definition sites." Nothing
@@ -870,18 +882,18 @@ initServerState = do
 
   -- Start persistent REPL in background thread using async
   asyncHandle <- async $ do
-    putStrLn "Starting persistent Agda REPL thread..."
+    hPutStrLn stderr "Starting persistent Agda REPL thread..."
     result <- runTCMTop $ Repl.mcpRepl
       (mcpCallback stateRef responseVarRef)          -- Response callback with state and response refs
       (readCommandFromChan responseVarRef shutdownVar chan) -- Command source with shutdown support
       (return ())                                    -- No special setup
     case result of
-      Left err -> putStrLn $ "REPL error: " ++ show err
-      Right _ -> putStrLn "REPL exited normally"
+      Left err -> hPutStrLn stderr $ "REPL error: " ++ show err
+      Right _ -> hPutStrLn stderr "REPL exited normally"
 
   -- Update state with async handle
   modifyIORef stateRef (\s -> s { replAsync = Just asyncHandle })
-  putStrLn "Persistent REPL started"
+  hPutStrLn stderr "Persistent REPL started"
   pure stateRef
 
 -- MCP Tool Handler - routes commands through persistent REPL
@@ -941,18 +953,18 @@ handleAgdaTool stateRef tool = do
 
       -- Send command to persistent REPL
       writeChan (commandChan state) cmd
-      putStrLn $ "Sent command to REPL: " ++ show tool
+      hPutStrLn stderr $ "Sent command to REPL: " ++ show tool
 
       -- Wait for encoded JSON response from REPL
       jsonValue <- takeMVar responseVar
-      putStrLn "Received encoded response from REPL"
+      hPutStrLn stderr "Received encoded response from REPL"
 
       -- If this was a successful load, update the current file in state
       case tool of
-        AgdaMCP.Types.AgdaLoad{file} -> do
+        AgdaMCP.Types.AgdaLoad{file, libraryFile = _} -> do
           absPath <- absolute (T.unpack file)
           modifyIORef stateRef (\s -> s { currentFile = Just absPath })
-          putStrLn $ "Updated current file to: " ++ T.unpack file
+          hPutStrLn stderr $ "Updated current file to: " ++ T.unpack file
         _ -> return ()
 
       -- Format response based on requested format (default: Concise)
@@ -1005,15 +1017,15 @@ initSessionManager = do
         state <- readIORef stateRef
         case replAsync state of
           Just asyncHandle -> do
-            putStrLn "Gracefully shutting down REPL thread..."
+            hPutStrLn stderr "Gracefully shutting down REPL thread..."
             -- Signal shutdown via MVar (tryPutMVar won't block if already signaled)
             void $ tryPutMVar (shutdownVar state) ()
             -- Wait for thread to actually exit (max 5 seconds)
             result <- timeout 5000000 $ waitCatch asyncHandle
             case result of
-              Nothing -> putStrLn "Warning: REPL thread did not exit within 5 seconds"
-              Just (Left ex) -> putStrLn $ "REPL thread exited with exception: " ++ show ex
-              Just (Right ()) -> putStrLn "REPL thread shutdown complete"
+              Nothing -> hPutStrLn stderr "Warning: REPL thread did not exit within 5 seconds"
+              Just (Left ex) -> hPutStrLn stderr $ "REPL thread exited with exception: " ++ show ex
+              Just (Right ()) -> hPutStrLn stderr "REPL thread shutdown complete"
           Nothing -> return ()
 
   SessionManager.createSessionManager initServerState (Just cleanup)
