@@ -62,7 +62,7 @@ mcpRepl callback readCmd setup = do
           if exit
             then liftIO (exitAgdaWith CommandError)
             else do
-              liftIO (putStrLn s)
+              liftIO (hPutStrLn stderr s)
               return False
 
     lift Bench.print
@@ -106,7 +106,7 @@ repl callback prompt setup = do
           if exit
             then liftIO (exitAgdaWith CommandError)
             else do
-              liftIO (putStrLn s)
+              liftIO (hPutStrLn stderr s)
               return False
 
     lift Bench.print
