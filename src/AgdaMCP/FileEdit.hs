@@ -18,6 +18,7 @@ import Data.Text (Text)
 import Data.List (sortBy)
 import Data.Ord (comparing, Down(..))
 import Agda.Syntax.Position (Range, rStart, rEnd, posLine, posCol)
+import System.IO (hPutStrLn, stderr)
 
 -- | File edit operations with response-specific semantics
 data FileEdit
@@ -136,7 +137,7 @@ applyReplaceLine file lineNum clauses _indentLevel _needsReload = do
   let lines' = T.lines content
 
   if lineNum < 1 || lineNum > length lines'
-    then putStrLn $ "Warning: Line number " ++ show lineNum ++ " out of bounds"
+    then hPutStrLn stderr $ "Warning: Line number " ++ show lineNum ++ " out of bounds"
     else do
       -- Split at line position
       let (beforeLines, originalLine:afterLines) = splitAt (lineNum - 1) lines'
@@ -152,8 +153,7 @@ applyReplaceLine file lineNum clauses _indentLevel _needsReload = do
       -- Reconstruct file
       let newContent = T.unlines $ beforeLines ++ indentedClauses ++ afterLines
       TIO.writeFile file newContent
-
-      putStrLn $ "Replaced line " ++ show lineNum ++ " with " ++
+      hPutStrLn stderr $ "Replaced line " ++ show lineNum ++ " with " ++
                  show (length clauses) ++ " clauses (indent level: " ++
                  show indentLevel ++ ")"
 
@@ -165,12 +165,12 @@ applyReplaceLine file lineNum clauses _indentLevel _needsReload = do
 -- Ensures earlier edits don't invalidate later positions
 applyBatchEdits :: FilePath -> [FileEdit] -> IO ()
 applyBatchEdits file ops = do
-  putStrLn $ "Applying " ++ show (length ops) ++ " batch edits in reverse order"
+  hPutStrLn stderr $ "Applying " ++ show (length ops) ++ " batch edits in reverse order"
   -- Operations should already be sorted in reverse order
   -- Apply each sequentially
   forM_ ops $ \op -> case op of
     ReplaceHole{..} -> applyReplaceHole file editRange editReplacement editKeepBraces
-    _ -> putStrLn "Warning: BatchEdits should only contain ReplaceHole operations"
+    _ -> hPutStrLn stderr "Warning: BatchEdits should only contain ReplaceHole operations"
   where
     forM_ = flip mapM_
 

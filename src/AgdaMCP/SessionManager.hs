@@ -221,7 +221,6 @@ getOrCreateSession mgr (Just sid) = do
 
       -- Register session
       atomically $ modifyTVar' (sessions mgr) $ Map.insert sid meta
-
       hPutStrLn stderr $ "SessionManager: Session " ++ T.unpack sid ++ " created successfully"
       return $ sessionState meta
 
