@@ -23,7 +23,7 @@ instance JSON.FromJSON ResponseFormat
 -- Note: format is Maybe Text for TH compatibility, parsed to ResponseFormat in handlers
 
 data AgdaTool
-    = AgdaLoad { file :: Text, sessionId :: Maybe Text, format :: Maybe Text }
+    = AgdaLoad { file :: Text, libraryFile :: Maybe Text, sessionId :: Maybe Text, format :: Maybe Text }
     | AgdaGetGoals { sessionId :: Maybe Text, format :: Maybe Text }
     | AgdaGetGoalType { goalId :: Int, sessionId :: Maybe Text, format :: Maybe Text }
     | AgdaGetGoalTypeImplicits { goalId :: Int, sessionId :: Maybe Text, format :: Maybe Text }
@@ -85,6 +85,7 @@ agdaToolDescriptions =
     , ("AgdaShowConstraints", "Show all unsolved type-checking constraints in the current file")
     , ("AgdaWhyInScope", "Look up documentation and scope information for a name")
     , ("AgdaListPostulates", "List all postulates in a file with their names, types, and positions. Useful for converting postulates to holes for implementation.")
+    , ("libraryFile", "Optional path to a custom Agda libraries configuration file. Overrides the default and AGDA_LIBRARIES environment variable.")
     , ("file", "Path to the Agda file")
     , ("moduleName", "Fully qualified module name (e.g., 'Data.Nat', 'Agda.Builtin.Nat')")
     , ("goalId", "The numeric ID of the goal/hole (starting from 0)")

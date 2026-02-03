@@ -102,13 +102,15 @@ Load and type-check an Agda file.
 
 **Arguments:**
 - `file` (string): Absolute or relative path to the Agda file
+- `libraryFile` (string, optional): Absolute path to a custom Agda libraries configuration file. Overrides the default and `AGDA_LIBRARIES` environment variable.
 
 **Example:**
 ```json
 {
   "name": "agda_load",
   "arguments": {
-    "file": "/path/to/Example.agda"
+    "file": "/path/to/Example.agda",
+    "libraryFile": "/home/bsaul/projects/example/libraries"
   }
 }
 ```
