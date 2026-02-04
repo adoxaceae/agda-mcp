@@ -257,19 +257,19 @@ extractFileEditsFromResponse stateRef resp = do
     (Resp_GiveAction ii (Give_String str), Just file) -> do
       range <- getInteractionRange ii
       let filepath = filePath file
-      liftIO $ putStrLn $ "Extracting GiveAction (Give_String) for goal " ++ show ii
+      liftIO $ hPutStrLn stderr $ "Extracting GiveAction (Give_String) for goal " ++ show ii
       return [FileEdit.ReplaceHole filepath range (T.pack str) False]
 
     (Resp_GiveAction ii Give_Paren, Just file) -> do
       range <- getInteractionRange ii
       let filepath = filePath file
-      liftIO $ putStrLn $ "Extracting GiveAction (Give_Paren) for goal " ++ show ii
+      liftIO $ hPutStrLn stderr $ "Extracting GiveAction (Give_Paren) for goal " ++ show ii
       return [FileEdit.ReplaceHole filepath range "" True]
 
     (Resp_GiveAction ii Give_NoParen, Just file) -> do
       -- Give_NoParen: don't remove braces, just leave content as-is
       -- This means we don't need to edit the file at all
-      liftIO $ putStrLn $ "GiveAction (Give_NoParen) for goal " ++ show ii ++ " - no file edit needed"
+      liftIO $ hPutStrLn stderr $ "GiveAction (Give_NoParen) for goal " ++ show ii ++ " - no file edit needed"
       return []
 
     -- MakeCase: Line replacement + multiple clauses
@@ -279,7 +279,7 @@ extractFileEditsFromResponse stateRef resp = do
       let (lineNum, col, _, _) = FileEdit.rangeToPositions range
       -- Get indentation from column position
       let indentLevel = col - 1
-      liftIO $ putStrLn $ "Extracting MakeCase for goal " ++ show ii ++
+      liftIO $ hPutStrLn stderr $ "Extracting MakeCase for goal " ++ show ii ++
                           " at line " ++ show lineNum ++
                           " with " ++ show (length clauses) ++ " clauses"
       return [FileEdit.ReplaceLine filepath lineNum (map T.pack clauses) indentLevel True]
@@ -287,7 +287,7 @@ extractFileEditsFromResponse stateRef resp = do
     -- SolveAll: Batch of hole replacements
     (Resp_SolveAll solutions, Just file) -> do
       let filepath = filePath file
-      liftIO $ putStrLn $ "Extracting SolveAll with " ++ show (length solutions) ++ " solutions"
+      liftIO $ hPutStrLn stderr $ "Extracting SolveAll with " ++ show (length solutions) ++ " solutions"
 
       -- Extract edits for each solution
       -- Note: solutions are already concrete Expr (not abstract)
@@ -295,7 +295,7 @@ extractFileEditsFromResponse stateRef resp = do
         range <- getInteractionRange ii
         -- expr is already Concrete.Expr, just prettyShow it
         let exprStr = prettyShow expr
-        liftIO $ putStrLn $ "  Solution for goal " ++ show ii ++ ": " ++ exprStr
+        liftIO $ hPutStrLn stderr $ "  Solution for goal " ++ show ii ++ ": " ++ exprStr
         return $ FileEdit.ReplaceHole filepath range (T.pack exprStr) False
 
       -- Sort in reverse position order (bottom to top)
@@ -532,10 +532,10 @@ loadFileWithCache stateRef filepath libraryFileArg = do
       maybeProjectRoot <- liftIO $ findProjectRoot filepath
       workDir <- case maybeProjectRoot of
         Just root -> do
-          liftIO $ putStrLn $ "Found project root: " ++ root
+          liftIO $ hPutStrLn stderr $ "Found project root: " ++ root
           liftIO $ absolute root
         Nothing -> do
-          liftIO $ putStrLn $ "No project root found, using file directory"
+          liftIO $ hPutStrLn stderr $ "No project root found, using file directory"
           liftIO $ absolute $ takeDirectory filepath
 
       -- Discover and load .agda-lib files for this file's project

@@ -65,7 +65,7 @@ mcpRepl callback readCmd setup = do
               liftIO (hPutStrLn stderr s)
               return False
 
-    lift Bench.print
+    -- lift Bench.print
     unless done interact'
 
 -- | 'repl' is a fake ghci interpreter for both the Emacs the JSON frontend
@@ -95,8 +95,8 @@ repl callback prompt setup = do
     done <- Bench.billTo [] $ do
 
       liftIO $ do
-        putStr prompt
-        hFlush stdout
+        hPutStr stderr prompt
+        hFlush stderr
       r <- maybeAbort runInteraction
       case r of
         Done      -> return True -- Done.
@@ -109,7 +109,7 @@ repl callback prompt setup = do
               liftIO (hPutStrLn stderr s)
               return False
 
-    lift Bench.print
+    -- lift Bench.print
     unless done interact'
 
   -- Reads the next command from stdin.
