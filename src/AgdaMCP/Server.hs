@@ -774,7 +774,22 @@ mcpGetGoals stateRef = do
       , goalType = goalTypeText
       , goalRange = rangeToTuple range
       }
-  pure $ AgdaResult True "Success" (Just $ JSON.toJSON goals)
+
+  -- Also get unsolved constraints (includes implicit metavariables)
+  constraints <- BasicOps.getConstraints
+  constraintTexts <- forM constraints $ \c -> do
+    doc <- prettyTCM c
+    return $ T.pack $ render doc
+
+  -- Build comprehensive result including both goals and constraints
+  let result = JSON.object
+        [ "goals" JSON..= JSON.toJSON goals
+        , "unsolvedConstraints" JSON..= JSON.toJSON constraintTexts
+        , "goalCount" JSON..= length goals
+        , "constraintCount" JSON..= length constraints
+        ]
+
+  pure $ AgdaResult True "Success" (Just result)
 
 mcpGetGoalType :: IORef ServerState -> Int -> TCM AgdaResult
 mcpGetGoalType stateRef goalIdParam = do
@@ -1013,7 +1028,7 @@ handleAgdaTool stateRef tool = do
 
     AgdaMCP.Types.AgdaGotoDefinition{file, line, column} -> do
       responseVar <- newEmptyMVar
-      
+
       -- Handler for GotoDefinition
       let handler resp = case resp of
             -- We expect Resp_HighlightingInfo after Cmd_load
@@ -1030,12 +1045,57 @@ handleAgdaTool stateRef tool = do
 
       let iotcm = toolToIOTCM currentFilePath tool
       let cmd = CommandWithResponse iotcm responseVar (Just handler)
-      
+
       writeChan (commandChan state) cmd
       hPutStrLn stderr $ "Sent GotoDefinition command to REPL"
       jsonValue <- takeMVar responseVar
       hPutStrLn stderr "Received encoded response for GotoDefinition from REPL"
-      
+
+      let responseText = Format.formatResponse (Format.getFormat tool) jsonValue
+      pure $ MCP.Server.ContentText responseText
+
+    AgdaMCP.Types.AgdaGetGoals{} -> do
+      responseVar <- newEmptyMVar
+
+      -- Custom handler to augment goals with unsolved constraints
+      let handler resp = case resp of
+            Resp_DisplayInfo _ -> do
+              -- Get interaction points (goals)
+              interactionIds <- getInteractionPoints
+              goals <- forM interactionIds $ \iid -> do
+                range <- getInteractionRange iid
+                constraint <- BasicOps.typeOfMeta AsIs iid
+                goalTypeText <- renderConstraintType constraint
+                return $ JSON.object
+                  [ "goalId" JSON..= (\(InteractionId n) -> n) iid
+                  , "goalType" JSON..= goalTypeText
+                  , "goalRange" JSON..= rangeToTuple range
+                  ]
+
+              -- Get unsolved constraints (includes implicit metavariables)
+              constraints <- BasicOps.getConstraints
+              constraintTexts <- forM constraints $ \c -> do
+                doc <- prettyTCM c
+                return $ T.pack $ render doc
+
+              -- Build enhanced response with both goals and constraints
+              let result = JSON.object
+                    [ "goals" JSON..= JSON.toJSON goals
+                    , "unsolvedConstraints" JSON..= JSON.toJSON constraintTexts
+                    , "goalCount" JSON..= length goals
+                    , "constraintCount" JSON..= length constraints
+                    ]
+              return $ Just result
+            _ -> return Nothing
+
+      let iotcm = toolToIOTCM currentFilePath tool
+      let cmd = CommandWithResponse iotcm responseVar (Just handler)
+
+      writeChan (commandChan state) cmd
+      hPutStrLn stderr $ "Sent GetGoals command to REPL"
+      jsonValue <- takeMVar responseVar
+      hPutStrLn stderr "Received enhanced goals response from REPL"
+
       let responseText = Format.formatResponse (Format.getFormat tool) jsonValue
       pure $ MCP.Server.ContentText responseText
 

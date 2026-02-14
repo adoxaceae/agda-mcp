@@ -31,6 +31,9 @@ formatResponse Types.Concise jsonValue =
     -- Check for single goal object (goalId, goalType, range fields)
     JSON.Object obj | isSingleGoalObject obj ->
       formatSingleGoal jsonValue
+    -- Check for enhanced goals response (with goals and unsolvedConstraints)
+    JSON.Object obj | isEnhancedGoalsObject obj ->
+      formatEnhancedGoals jsonValue
     -- Check for standard Agda response with "kind" field
     _ -> case getField "kind" jsonValue of
       Just (JSON.String "DisplayInfo") -> formatDisplayInfo jsonValue
@@ -106,13 +109,52 @@ formatDisplayInfo jsonValue =
 formatAllGoalsWarnings :: JSON.Value -> Text
 formatAllGoalsWarnings infoValue =
   let visibleGoals = getField "visibleGoals" infoValue
-      goalCount = case visibleGoals of
+      invisibleGoals = getField "invisibleGoals" infoValue
+      warnings = getField "warnings" infoValue
+      errors = getField "errors" infoValue
+
+      visibleCount = case visibleGoals of
         Just (JSON.Array arr) -> V.length arr
         _ -> 0
-      goalsSummary = case visibleGoals of
-        Just (JSON.Array arr) -> T.intercalate " " $ V.toList $ V.map formatGoalSummary arr
-        _ -> ""
-  in T.pack (show goalCount) <> " goals: " <> goalsSummary
+      invisibleCount = case invisibleGoals of
+        Just (JSON.Array arr) -> V.length arr
+        _ -> 0
+      warningCount = case warnings of
+        Just (JSON.Array arr) -> V.length arr
+        _ -> 0
+      errorCount = case errors of
+        Just (JSON.Array arr) -> V.length arr
+        _ -> 0
+
+      totalGoalCount = visibleCount + invisibleCount
+
+      visibleSummary = case visibleGoals of
+        Just (JSON.Array arr) -> V.toList $ V.map formatGoalSummary arr
+        _ -> []
+      invisibleSummary = case invisibleGoals of
+        Just (JSON.Array arr) -> V.toList $ V.map formatGoalSummary arr
+        _ -> []
+
+      goalsSummary = T.intercalate " " (visibleSummary ++ invisibleSummary)
+
+      -- Build comprehensive status message
+      parts = [ T.pack (show totalGoalCount) <> " goals"
+              , if invisibleCount > 0
+                then "(" <> T.pack (show invisibleCount) <> " unsolved implicit)"
+                else ""
+              , if warningCount > 0
+                then T.pack (show warningCount) <> " warnings"
+                else ""
+              , if errorCount > 0
+                then T.pack (show errorCount) <> " errors"
+                else ""
+              ]
+
+      statusLine = T.intercalate ", " $ filter (not . T.null) parts
+
+  in if T.null goalsSummary
+       then statusLine
+       else statusLine <> ": " <> goalsSummary
 
 -- Format a single goal as "?0:Nat(10:12)"
 formatGoalSummary :: JSON.Value -> Text
@@ -327,6 +369,74 @@ formatSolveAll jsonValue =
         (Just (JSON.Number gid), Just (JSON.String expr)) ->
           "?" <> T.pack (show (floor gid :: Int)) <> " := " <> expr
         _ -> extractText sol
+
+-- ============================================================================
+-- Enhanced Goals Formatting (with unsolved constraints)
+-- ============================================================================
+
+-- Check if object is an enhanced goals response (has goals and unsolvedConstraints)
+isEnhancedGoalsObject :: JSON.KeyMap.KeyMap JSON.Value -> Bool
+isEnhancedGoalsObject obj =
+  let hasGoals = JSON.KeyMap.member (JSON.Key.fromText "goals") obj
+      hasConstraints = JSON.KeyMap.member (JSON.Key.fromText "unsolvedConstraints") obj
+  in hasGoals && hasConstraints
+
+formatEnhancedGoals :: JSON.Value -> Text
+formatEnhancedGoals jsonValue =
+  let goalCount = case getField "goalCount" jsonValue of
+        Just (JSON.Number n) -> floor n :: Int
+        _ -> 0
+      constraintCount = case getField "constraintCount" jsonValue of
+        Just (JSON.Number n) -> floor n :: Int
+        _ -> 0
+
+      goalsList = case getField "goals" jsonValue of
+        Just (JSON.Array arr) -> V.toList arr
+        _ -> []
+
+      constraintsList = case getField "unsolvedConstraints" jsonValue of
+        Just (JSON.Array arr) -> V.toList $ V.mapMaybe extractString arr
+        _ -> []
+
+      -- Format goals summary
+      goalsSummary = case goalsList of
+        [] -> ""
+        _ -> T.intercalate " " $ map formatGoalFromObject goalsList
+
+      -- Build status line
+      statusParts = [ T.pack (show goalCount) <> " goals"
+                    , if constraintCount > 0
+                      then T.pack (show constraintCount) <> " unsolved constraints"
+                      else ""
+                    ]
+      statusLine = T.intercalate ", " $ filter (not . T.null) statusParts
+
+      -- Format constraints if any
+      constraintsSection = if null constraintsList
+        then ""
+        else "\n\nUnsolved constraints:\n  " <> T.intercalate "\n  " constraintsList
+
+  in if T.null goalsSummary
+       then statusLine <> constraintsSection
+       else statusLine <> ": " <> goalsSummary <> constraintsSection
+
+-- Format a goal from the enhanced goals array
+formatGoalFromObject :: JSON.Value -> Text
+formatGoalFromObject goalValue =
+  let goalId = case getField "goalId" goalValue of
+        Just (JSON.Number n) -> T.pack $ show (floor n :: Int)
+        _ -> "?"
+      goalType = case getField "goalType" goalValue of
+        Just (JSON.String t) -> t
+        _ -> "?"
+      range = case getField "goalRange" goalValue of
+        Just (JSON.Array arr) | V.length arr >= 2 ->
+          case (arr V.! 0, arr V.! 1) of
+            (JSON.Number line, JSON.Number col) ->
+              "(" <> T.pack (show (floor line :: Int)) <> ":" <> T.pack (show (floor col :: Int)) <> ")"
+            _ -> ""
+        _ -> ""
+  in "?" <> goalId <> ":" <> goalType <> range
 
 -- ============================================================================
 -- Single Goal Formatting
