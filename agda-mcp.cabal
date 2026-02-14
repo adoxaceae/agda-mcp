@@ -1,6 +1,6 @@
 cabal-version: 3.0
 name: agda-mcp
-version: 0.1.0.0
+version: 0.2.0
 synopsis: MCP server for Agda interaction
 description: Model Context Protocol server providing structured access to Agda's interaction capabilities
 homepage: https://github.com/anthropics/claude-code
