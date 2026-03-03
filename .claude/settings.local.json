@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(nix build:*)",
+      "Bash(nix eval:*)",
+      "Bash(curl:*)",
+      "Bash(for f in Handlers Types Protocol)",
+      "Bash(do echo \"=== $f.hs ===\")",
+      "Bash(done)"
+    ]
+  }
+}

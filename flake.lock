@@ -36,11 +36,11 @@
     "mcp-server-hs": {
       "flake": false,
       "locked": {
-        "lastModified": 1755071752,
-        "narHash": "sha256-DaSefoJKo6AJ9Gd8gwalVkkd5P7MVnstdeL6LV2izvY=",
+        "lastModified": 1770788343,
+        "narHash": "sha256-H+VUKY0B68oiWPqicnRXXd4cwO0ESMeTpMdfTg3cev4=",
         "owner": "drshade",
         "repo": "haskell-mcp-server",
-        "rev": "92c70a93446adca0c7cfced97a93eed23bfb5200",
+        "rev": "7991756933ae5e39ad480b0be830beb855cb8768",
         "type": "github"
       },
       "original": {
