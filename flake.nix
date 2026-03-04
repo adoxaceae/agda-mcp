@@ -29,12 +29,16 @@
             mcp-server.source = pkgs.applyPatches {
               name = "mcp-server-patched";
               src = inputs.mcp-server-hs;
-              patches = [ ./patches/mcp-server-header-optional.patch ];
+              patches = [ ./patches/mcp-server-protocol-2025-11-25.patch ];
             };
             # aeson.source = "1.5.0.0";      # Override aeson to a custom version from Hackage
             # shower.source = inputs.shower; # Override shower to a custom source path
           };
           settings = {
+            agda-mcp = {
+              # Tests require Agda to be running and file copying doesn't work in nix sandbox
+              check = false;
+            };
             #  aeson = {
             #    check = false;
             #  };

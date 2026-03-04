@@ -1,0 +1,107 @@
+diff --git a/src/MCP/Server/Protocol.hs b/src/MCP/Server/Protocol.hs
+--- a/src/MCP/Server/Protocol.hs
++++ b/src/MCP/Server/Protocol.hs
+@@ -43,7 +43,7 @@
+ import           MCP.Server.Types
+
+ protocolVersion :: Text
+-protocolVersion = "2025-06-18"
++protocolVersion = "2025-11-25"
+
+
+ -- | Initialize request
+diff --git a/src/MCP/Server/Transport/Http.hs b/src/MCP/Server/Transport/Http.hs
+--- a/src/MCP/Server/Transport/Http.hs
++++ b/src/MCP/Server/Transport/Http.hs
+@@ -24,7 +24,7 @@
+ import           MCP.Server.JsonRpc
+ import           MCP.Server.Types
+
+--- | HTTP transport configuration following MCP 2025-06-18 Streamable HTTP specification
++-- | HTTP transport configuration following MCP 2025-11-25 Streamable HTTP specification
+ data HttpConfig = HttpConfig
+   { httpPort     :: Int      -- ^ Port to listen on
+   , httpHost     :: String   -- ^ Host to bind to (default "localhost")
+@@ -70,7 +70,7 @@
+ -- | Handle MCP requests according to Streamable HTTP specification
+ handleMcpRequest :: HttpConfig -> McpServerInfo -> McpServerHandlers IO -> Wai.Request -> (Wai.Response -> IO Wai.ResponseReceived) -> IO Wai.ResponseReceived
+ handleMcpRequest config serverInfo handlers req respond = do
+-  -- Check for mandatory MCP-Protocol-Version header (2025-06-18 requirement)
++  -- Check for mandatory MCP-Protocol-Version header (2025-11-25 requirement)
+   case lookup "MCP-Protocol-Version" (Wai.requestHeaders req) of
+     Nothing -> do
+       logVerbose config "Request rejected: Missing MCP-Protocol-Version header"
+@@ -79,12 +79,12 @@
+         [("Content-Type", "application/json")]
+         (encode $ object ["error" .= ("Missing required MCP-Protocol-Version header" :: Text)])
+     Just headerValue ->
+-      if TE.decodeUtf8 headerValue /= "2025-06-18" then do
++      if TE.decodeUtf8 headerValue /= "2025-11-25" then do
+         logVerbose config $ "Request rejected: Invalid protocol version: " ++ show headerValue
+         respond $ Wai.responseLBS
+           status400
+           [("Content-Type", "application/json")]
+-          (encode $ object ["error" .= ("Unsupported protocol version. Server only supports 2025-06-18" :: Text)])
++          (encode $ object ["error" .= ("Unsupported protocol version. Server only supports 2025-11-25" :: Text)])
+       else
+         case Wai.requestMethod req of
+           -- GET requests for endpoint discovery
+@@ -93,7 +93,7 @@
+                   [ "name" .= serverName serverInfo
+                   , "version" .= serverVersion serverInfo
+                   , "description" .= serverInstructions serverInfo
+-                  , "protocolVersion" .= ("2025-06-18" :: Text)
++                  , "protocolVersion" .= ("2025-11-25" :: Text)
+                   , "capabilities" .= object
+                       [ "tools" .= object []
+                       , "prompts" .= object []
+diff --git a/test/Spec/ProtocolVersionNegotiation.hs b/test/Spec/ProtocolVersionNegotiation.hs
+--- a/test/Spec/ProtocolVersionNegotiation.hs
++++ b/test/Spec/ProtocolVersionNegotiation.hs
+@@ -17,12 +17,12 @@
+ -- with another protocol version it supports."
+ --
+ -- This means if a client sends protocolVersion "2025-11-25" and the server
+--- only supports "2025-06-18", the server should respond with:
++-- only supports "2025-11-25", the server should respond with:
+ -- {
+ --   "jsonrpc": "2.0",
+ --   "id": 0,
+ --   "result": {
+---     "protocolVersion": "2025-06-18",
++--     "protocolVersion": "2025-11-25",
+ --     ...
+ --   }
+ -- }
+@@ -73,17 +73,17 @@
+             case KM.lookup "protocolVersion" result of
+               Just (String version) -> do
+                 -- The server should have responded with its supported version
+-                -- We expect "2025-06-18" based on the library
+-                version `shouldBe` "2025-06-18"
++                -- We expect "2025-11-25" based on the library
++                version `shouldBe` "2025-11-25"
+               Just other -> expectationFailure $ "protocolVersion is not a string: " ++ show other
+               Nothing -> expectationFailure "Response missing protocolVersion"
+           Just other -> expectationFailure $ "Result is not an object: " ++ show other
+
+   it "Server should respond with same version when client requests supported version" $ do
+-    -- This test verifies the happy path: client requests "2025-06-18"
+-    -- and server responds with "2025-06-18"
++    -- This test verifies the happy path: client requests "2025-11-25"
++    -- and server responds with "2025-11-25"
+     let params = object
+-          [ "protocolVersion" .= String "2025-06-18"  -- Library's supported version
++          [ "protocolVersion" .= String "2025-11-25"  -- Library's supported version
+           , "capabilities" .= object []
+           , "clientInfo" .= object
+               [ "name" .= String "test-client"
+@@ -108,7 +108,7 @@
+           Nothing -> expectationFailure "Response has no result"
+           Just (Object result) -> do
+             case KM.lookup "protocolVersion" result of
+-              Just (String version) -> version `shouldBe` "2025-06-18"
++              Just (String version) -> version `shouldBe` "2025-11-25"
+               Just other -> expectationFailure $ "protocolVersion is not a string: " ++ show other
+               Nothing -> expectationFailure "Response missing protocolVersion"
+           Just other -> expectationFailure $ "Result is not an object: " ++ show other
